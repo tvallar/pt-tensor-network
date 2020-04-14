@@ -83,27 +83,22 @@ def train_val_split(*arrays, split_val=.2):
         val_set = val_set[0]
     return train_set, val_set
 
-def load_from_file(path, single_line=-1):
+def load_from_file(path, single_line=-1, num_samples=1000):
     try:
-        data = pd.read_csv(path)#.values.astype(np.float32)
-        #print(data)
+        data = pd.read_csv(path)
         data_np = data.values.tolist()
-        #print(data_np[0])
+
         if single_line!=-1:
             data_out = data_np[36*single_line:36*(single_line+1)]
-            for i in range(100):
-                data_out.append(data_out[i%len(data_out)])
-        #print(data_out[0])
-        #print(len(data_out))
-        #attributes = ['k','QQ', 'x_b', 'phi_x', 'F', 'errF']
-        #data_cut = 
-        #for i in range(len(data_out)):
-            #print(len(data_out[i]))
+            for i in range(num_samples):
+                line = data_out[i%len(data_out)]
+                data_out.append(line)
+
         return np.array(data_out)
     except:
         raise ValueError(f"Error loading file {path}")
     
-def full_data_load(seed=231, line_num=-1):
+def full_data_load(seed=231, line_num=-1, num_samples=1000):
     if seed:
         np.random.seed(seed)
     dataset = np.zeros((1,14), dtype=np.float32)
@@ -112,7 +107,7 @@ def full_data_load(seed=231, line_num=-1):
     for file in os.listdir(data_folder):
         if file[-3:] == 'csv':
             full_path = os.path.join(data_folder, file)
-            data = load_from_file(full_path, single_line=line_num)
+            data = load_from_file(full_path, single_line=line_num, num_samples=num_samples)
             dataset = np.concatenate([dataset, data], axis=0)
     print('-')
     print(len(dataset))

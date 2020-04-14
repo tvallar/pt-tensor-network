@@ -27,6 +27,10 @@ dropout_fraction = config['NETWORKS']['dropout_fraction']
 hidden_arch_list = config['NETWORKS']['network_hidden']
 clip_norm = config['TRAINING']['clip_norm']
 
+
+### This is where the function is defined, if you change the method this bhdvcs variable points to 
+# to the new function you want to use you will only need to change the parameter input
+# in the loss function and later in main training loop 
 bhdvcs = BHDVCS_tf.BHDVCS()
 
 
@@ -54,15 +58,19 @@ def train(epochs, run_name, verbosity=2, validation_set=True, line_num = -1):
         raise ValueError(f"Optimizer type '{opt_type}' not recognized.")
 
     # load dataset
-    train_set, val_set = data.full_data_load(line_num=line_num)
+    #*********************************************************#    
+    # IMPORTANT NOTE: This is file specific. If you change the data file structure you will have to change these methods.
+    # full_data_load then to load_from_file will get you to where the individual runs are loaded
+    # You will see that currently in the file they load 36 points. If you go to the data folder and look at the 
+    # data csv you will see that each set of the same x, k, t, Q2 variables has 36 individual data points
+    train_set, val_set = data.full_data_load(line_num=line_num, num_samples=1000)
     train_loss_list = []
     val_loss_list = []
 
+    # Collecting number of training and validation samples respectively
     num_train = int(len(train_set)/batch_size)
     num_val = int(len(val_set)/batch_size)
-    #train_set = train_set[np.where((train_set[:,-3] == 2) | (train_set[:,-3] == 2) | (train_set[:,-3] == 2))]
-    #val_set = val_set[np.where((val_set[:,-3] == 2) | (val_set[:,-3] == 2) | (val_set[:,-3] == 2))]
-
+   
     # dataset format is experiment_id, x, t, Q2, k0, phi, L, sigma, error
     # for now we are not using the experiment_id value
     kin_train, sig_train = train_set[:,1:5], train_set[:,5:14]
@@ -181,6 +189,12 @@ def train(epochs, run_name, verbosity=2, validation_set=True, line_num = -1):
     first = True
     num=0
     for (batch, (kinematics, sigma_true)) in enumerate(train_dataset):
+        ##
+        ## This code is specific to the function being used. As it currently is this
+        ## program uses the BHDVCS function as in the BHDVCS_tf.py file. This will have
+        ## to be changed if the function file is changed. The Loss Function method will
+        ## have to be changed as well.
+        ##
         ffs = predict(model, kinematics, training=True)
         reH, reE, reHt = tf.unstack(ffs, axis=-1)
 
@@ -193,6 +207,7 @@ def train(epochs, run_name, verbosity=2, validation_set=True, line_num = -1):
         phi, L, sigma_true, error, F1, F2, reH_real, reE_real, reHT_real = tf.unstack(sigma_true, axis=-1)
         phi = tf.dtypes.cast(phi, tf.float32)
         sigma_true = tf.dtypes.cast(sigma_true, tf.float32)
+        error = tf.dtypes.cast(error, tf.float32)
         F1 = tf.dtypes.cast(F1, tf.float32)
         F2 = tf.dtypes.cast(F2, tf.float32)
         reH_real = tf.dtypes.cast(reH_real, tf.float32)
@@ -200,10 +215,27 @@ def train(epochs, run_name, verbosity=2, validation_set=True, line_num = -1):
         reHT_real = tf.dtypes.cast(reHT_real, tf.float32)
         #F2 = tf.dtypes.cast(F2, tf.float32)
         L = tf.dtypes.cast(L, tf.int32)
+
+
+        ## SAMPLING LOCATION
+        # This is where the data is generated. In this instance I did not use the F value from the file 
+        # but used a generated F value (sigma_equation) using the correct parameter values because
+        # the equation does not work correctly. While the values from the equation appear in the same way on a plot
+        # as the values from the file in terms of slope and general position relative to each other, the magnitude of the
+        # values from the equation is a few times higher than that from the file. This was not something I could figure out
+        # the answer to.
+        # 
+        # Other than that, everything is pretty similar. I use (F_err/F)*sigma_equation to get sigma_eq_err then perform the
+        # normal distribution using that
+        
         sigma_pred = bhdvcs.TotalUUXS([phi], [Q2, xbj, t, k0, F1, F2, reH, reE, reHt, tf.constant(0.014863)])
         sigma_pred = tf.dtypes.cast(sigma_pred, tf.float32)
         sigma_equation = bhdvcs.TotalUUXS([phi], [Q2, xbj, t, k0, F1, F2, reH_real, reE_real, reHT_real, tf.constant(0.014863)])
         sigma_equation = tf.dtypes.cast(sigma_equation, tf.float32)
+        sigma_eq_err = (error/sigma_true)*sigma_equation
+        
+        sigma_equation = tf.random.normal([1], mean=sigma_equation, stddev=sigma_eq_err, dtype=tf.dtypes.float32, seed=None, name=None)
+
         error = tf.dtypes.cast(error, tf.float32)
         #sigma_pred = xsx.ff_to_xsx(reH, imH, reE, imE, reHt, imHt, reEt, imEt, phi, xbj, t, Q2, L, k0)
         num+=1
@@ -266,6 +298,11 @@ def loss_function(kinematics, ffs, bhdvcs_func, sigma_true):
         loss (tf.Tensor) the error-adjusted mean squared error of the
         model's predictions.
     """
+    ##
+    ## This code is specific to the function being used. As it currently is this
+    ## program uses the BHDVCS function as in the BHDVCS_tf.py file. This will have
+    ## to be changed if the function file is changed
+    ##
     reH, reE, reHt = tf.unstack(ffs, axis=-1)
 
     reH, reE, reHt = theory_bound.theory_bound(reH, reE, reHt)
@@ -277,6 +314,7 @@ def loss_function(kinematics, ffs, bhdvcs_func, sigma_true):
     phi, L, sigma_true, error, F1, F2, reH_real, reE_real, reHT_real = tf.unstack(sigma_true, axis=-1)
     phi = tf.dtypes.cast(phi, tf.float32)
     sigma_true = tf.dtypes.cast(sigma_true, tf.float32)
+    error = tf.dtypes.cast(error, tf.float32)
     F1 = tf.dtypes.cast(F1, tf.float32)
     F2 = tf.dtypes.cast(F2, tf.float32)
     reH_real = tf.dtypes.cast(reH_real, tf.float32)
@@ -287,6 +325,8 @@ def loss_function(kinematics, ffs, bhdvcs_func, sigma_true):
     sigma_pred = tf.dtypes.cast(sigma_pred, tf.float32)
     sigma_equation = bhdvcs.TotalUUXS([phi], [Q2, xbj, t, k0, F1, F2, reH_real, reE_real, reHT_real, tf.constant(0.014863)])
     sigma_equation = tf.dtypes.cast(sigma_equation, tf.float32)
+    sigma_eq_err = (error/sigma_true)*sigma_equation
+    sigma_equation = tf.random.normal([1], mean=sigma_equation, stddev=sigma_eq_err, dtype=tf.dtypes.float32, seed=None, name=None)
     error = tf.dtypes.cast(error, tf.float32)
     return .1 * tf.math.reduce_mean(
         tf.math.square( (sigma_equation - sigma_pred) / (1. + error) )
